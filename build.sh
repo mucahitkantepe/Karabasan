@@ -25,8 +25,9 @@ lipo -create \
 
 rm "$BUILD_DIR/$APP_NAME-arm64" "$BUILD_DIR/$APP_NAME-x86_64"
 
-# Copy Info.plist
+# Copy Info.plist and icon
 cp Info.plist "$APP_BUNDLE/Contents/"
+cp Karabasan.icns "$APP_BUNDLE/Contents/Resources/"
 
 # Ad-hoc code sign
 codesign --force --sign - "$APP_BUNDLE"

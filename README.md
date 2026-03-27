@@ -2,16 +2,19 @@
 
 A tiny macOS menu bar app that prevents your Mac from sleeping. One click to toggle.
 
-Named after the **Karabasan** — the sleep paralysis demon from Turkic mythology that keeps you from sleeping.
+Named after the **Karabasan** — the sleep paralysis demon from Turkic mythology.
 
-## How It Works
+## Usage
 
-- Click the **eye icon** in the menu bar to toggle sleep prevention on/off
-- **Eye open** = sleep prevented (Karabasan is upon you)
-- **Eye closed** = sleep allowed (Karabasan sleeps)
-- Right-click for quit menu
+- **Left-click** the eye icon to toggle idle sleep prevention on/off
+- **Right-click** for Full mode (prevents ALL sleep including lid close, requires password)
 
-Uses macOS `IOPMAssertion` API (same as Caffeine/Amphetamine) — no elevated privileges needed.
+Three states:
+| Icon | Mode | What it does |
+|------|------|-------------|
+| Eye closed | Off | Sleep allowed |
+| Eye open | On | Idle sleep prevented |
+| Eye with warning | Full | All sleep prevented (including lid close) |
 
 ## Install
 
@@ -32,22 +35,14 @@ cd Karabasan
 open build/Karabasan.app
 ```
 
-The build script compiles a universal binary (Apple Silicon + Intel).
-
-## How Is This Different from Caffeine?
-
-Same concept, same underlying API. Karabasan is:
-- Open source (single Swift file, ~80 lines)
-- No App Store, no tracking, no updates phoning home
-- Named after a Turkic demon instead of a beverage
+Builds a universal binary (Apple Silicon + Intel).
 
 ## Security
 
-- **No elevated privileges** — standard user-level `IOPMAssertionCreate` API
 - **No network access** — zero outbound connections
 - **No data collection** — no files read or written
-- **Self-cleaning** — assertion is released when the app quits
-- Only prevents **idle** sleep. Closing the lid and Apple menu > Sleep still work.
+- **Self-cleaning** — idle assertion is released when the app quits
+- Full mode uses `pmset disablesleep` and persists after quit (by design)
 
 ## License
 

@@ -14,11 +14,13 @@
     <string>1.0</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
+    <key>CFBundleIconFile</key>
+    <string>Karabasan</string>
     <key>LSMinimumSystemVersion</key>
     <string>13.0</string>
     <key>LSUIElement</key>
     <true/>
     <key>NSAppleEventsUsageDescription</key>
-    <string>Karabasan needs to run a privileged command to change power management settings.</string>
+    <string>Karabasan needs administrator privileges to toggle system sleep prevention.</string>
 </dict>
 </plist>
