@@ -18,11 +18,11 @@ Three states:
 
 ## Install
 
-### Download
+```bash
+curl -fsSL https://raw.githubusercontent.com/mucahitkantepe/Karabasan/main/install.sh | sh
+```
 
-Grab the latest `Karabasan.zip` from [Releases](../../releases), unzip, and drag `Karabasan.app` to `/Applications`.
-
-> On first launch, macOS may block the app since it's unsigned. Go to **System Settings > Privacy & Security** and click **Open Anyway**.
+Or download `Karabasan.zip` from [Releases](../../releases) manually.
 
 ### Build from Source
 
