@@ -7,13 +7,31 @@ enum Mode {
     case full
 }
 
+struct Duration {
+    let title: String
+    let seconds: TimeInterval? // nil = indefinite
+}
+
+let durations: [Duration] = [
+    Duration(title: "30 Minutes", seconds: 30 * 60),
+    Duration(title: "1 Hour", seconds: 60 * 60),
+    Duration(title: "2 Hours", seconds: 2 * 60 * 60),
+    Duration(title: "4 Hours", seconds: 4 * 60 * 60),
+    Duration(title: "8 Hours", seconds: 8 * 60 * 60),
+    Duration(title: "Indefinitely", seconds: nil),
+]
+
 class KarabasanApp: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem!
     private var mode: Mode = .off
     private var assertionID: IOPMAssertionID = 0
+    private var timer: Timer?
+    private var expiresAt: Date?
+    private var tooltipTimer: Timer?
+    private var activeDurationIndex: Int? // which duration is currently active
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
+        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
 
         if let button = statusItem.button {
             button.target = self
@@ -28,22 +46,50 @@ class KarabasanApp: NSObject, NSApplicationDelegate {
     private func updateIcon() {
         guard let button = statusItem.button else { return }
         let symbol: String
-        let tip: String
+        var tip: String
         switch mode {
         case .off:
             symbol = "eye.slash"
             tip = "Off — sleep allowed"
         case .idle:
             symbol = "eye.fill"
-            tip = "On — idle sleep prevented"
+            if let expires = expiresAt {
+                tip = "On — idle sleep prevented (\(formatTime(expires.timeIntervalSinceNow)) left)"
+            } else {
+                tip = "On — idle sleep prevented"
+            }
         case .full:
-            symbol = "eye.trianglebadge.exclamationmark.fill"
-            tip = "Full — all sleep prevented (including lid close)"
+            symbol = "eye.fill"
+            if let expires = expiresAt {
+                tip = "Full — all sleep prevented (\(formatTime(expires.timeIntervalSinceNow)) left)"
+            } else {
+                tip = "Full — all sleep prevented (including lid close)"
+            }
         }
         let image = NSImage(systemSymbolName: symbol, accessibilityDescription: tip)
-        image?.isTemplate = true
-        button.image = image
+        if mode == .full {
+            image?.isTemplate = false
+            let tinted = NSImage(size: image!.size)
+            tinted.lockFocus()
+            image!.draw(in: NSRect(origin: .zero, size: image!.size))
+            NSColor.systemRed.setFill()
+            NSRect(origin: .zero, size: image!.size).fill(using: .sourceAtop)
+            tinted.unlockFocus()
+            tinted.isTemplate = false
+            button.image = tinted
+        } else {
+            image?.isTemplate = true
+            button.image = image
+        }
         button.toolTip = tip
+    }
+
+    private func formatTime(_ seconds: TimeInterval) -> String {
+        let s = max(0, Int(seconds))
+        let h = s / 3600
+        let m = (s % 3600) / 60
+        if h > 0 { return "\(h)h \(m)m" }
+        return "\(m)m"
     }
 
     // MARK: - Click handling
@@ -57,44 +103,145 @@ class KarabasanApp: NSObject, NSApplicationDelegate {
         }
     }
 
-    /// Left-click: toggle between off and idle (no password)
+    /// Left-click: toggle idle prevention (indefinite, no password)
     private func toggleIdle() {
-        if mode == .full { return } // left-click disabled in full mode, use menu
-
-        if mode == .off {
-            if createAssertion() { mode = .idle }
+        if mode == .full {
+            deactivateFull()
+        } else if mode == .idle {
+            deactivateIdle()
         } else {
-            releaseAssertion()
-            mode = .off
+            activateIdle(seconds: nil)
+            activeDurationIndex = durations.count - 1 // "Indefinitely"
+        }
+    }
+
+    // MARK: - Idle mode (IOPMAssertion)
+
+    private func activateIdle(seconds: TimeInterval?) {
+        deactivateAll()
+
+        if createAssertion() {
+            mode = .idle
+            startTimer(seconds: seconds)
         }
         updateIcon()
+    }
+
+    private func deactivateIdle() {
+        releaseAssertion()
+        cancelTimer()
+        mode = .off
+        expiresAt = nil
+        updateIcon()
+    }
+
+    // MARK: - Full mode (pmset SleepDisabled)
+
+    private func activateFull(seconds: TimeInterval?) {
+        deactivateAll()
+
+        if setSleepDisabled(true) {
+            mode = .full
+            startTimer(seconds: seconds)
+        }
+        updateIcon()
+    }
+
+    private func deactivateFull() {
+        _ = setSleepDisabled(false)
+        cancelTimer()
+        mode = .off
+        expiresAt = nil
+        updateIcon()
+    }
+
+    private func deactivateAll() {
+        releaseAssertion()
+        if mode == .full { _ = setSleepDisabled(false) }
+        cancelTimer()
+        expiresAt = nil
+        activeDurationIndex = nil
+    }
+
+    // MARK: - Timer
+
+    private func startTimer(seconds: TimeInterval?) {
+        guard let seconds = seconds else { return }
+        expiresAt = Date().addingTimeInterval(seconds)
+        timer = Timer.scheduledTimer(withTimeInterval: seconds, repeats: false) { [weak self] _ in
+            guard let self = self else { return }
+            if self.mode == .full {
+                self.deactivateFull()
+            } else {
+                self.deactivateIdle()
+            }
+        }
+        tooltipTimer = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
+            self?.updateIcon()
+        }
+    }
+
+    private func cancelTimer() {
+        timer?.invalidate()
+        timer = nil
+        tooltipTimer?.invalidate()
+        tooltipTimer = nil
+    }
+
+    // MARK: - Menu
+
+    private func buildDurationSubmenu(action: Selector, activeMode: Mode) -> NSMenu {
+        let submenu = NSMenu()
+        for (i, d) in durations.enumerated() {
+            let item = NSMenuItem(title: d.title, action: action, keyEquivalent: "")
+            item.target = self
+            item.tag = i
+            if mode == activeMode && activeDurationIndex == i { item.state = .on }
+            submenu.addItem(item)
+        }
+        return submenu
     }
 
     private func showMenu() {
         let menu = NSMenu()
 
-        if mode == .full {
-            let item = NSMenuItem(title: "Disable Full Sleep Prevention", action: #selector(disableFull), keyEquivalent: "")
-            item.target = self
-            menu.addItem(item)
-        } else {
-            let item = NSMenuItem(title: "Prevent ALL Sleep (password required)", action: #selector(enableFull), keyEquivalent: "")
-            item.target = self
-            menu.addItem(item)
-        }
+        let idleItem = NSMenuItem(title: "Prevent Idle Sleep", action: nil, keyEquivalent: "")
+        idleItem.submenu = buildDurationSubmenu(action: #selector(idleDurationSelected(_:)), activeMode: .idle)
+        menu.addItem(idleItem)
+
+        let fullItem = NSMenuItem(title: "Prevent ALL Sleep", action: nil, keyEquivalent: "")
+        fullItem.submenu = buildDurationSubmenu(action: #selector(fullDurationSelected(_:)), activeMode: .full)
+        menu.addItem(fullItem)
 
         menu.addItem(.separator())
 
-        let infoItem = NSMenuItem(title: "How It Works", action: #selector(showInfo), keyEquivalent: "")
-        infoItem.target = self
-        menu.addItem(infoItem)
-
-        menu.addItem(.separator())
+        let aboutItem = NSMenuItem(title: "About", action: #selector(showInfo), keyEquivalent: "")
+        aboutItem.image = NSImage(systemSymbolName: "info.circle", accessibilityDescription: nil)
+        aboutItem.target = self
+        menu.addItem(aboutItem)
         menu.addItem(NSMenuItem(title: "Quit", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
 
         statusItem.menu = menu
         statusItem.button?.performClick(nil)
         statusItem.menu = nil
+    }
+
+    @objc private func idleDurationSelected(_ sender: NSMenuItem) {
+        if mode == .idle && activeDurationIndex == sender.tag {
+            deactivateIdle()
+        } else {
+            activateIdle(seconds: durations[sender.tag].seconds)
+            activeDurationIndex = sender.tag
+        }
+    }
+
+    @objc private func fullDurationSelected(_ sender: NSMenuItem) {
+        if mode == .full && activeDurationIndex == sender.tag {
+            deactivateFull()
+        } else {
+            activateFull(seconds: durations[sender.tag].seconds)
+            activeDurationIndex = sender.tag
+        }
     }
 
     // MARK: - Info
@@ -103,22 +250,17 @@ class KarabasanApp: NSObject, NSApplicationDelegate {
         let alert = NSAlert()
         alert.messageText = "Karabasan"
         alert.informativeText = """
-        Left-click the icon to toggle:
+        Left-click: toggle idle sleep prevention
 
-        \u{25CC}  Off — sleep allowed
-        \u{25C9}  On — prevents idle sleep
+        Right-click for duration and mode options:
 
-        Right-click for Full mode:
+        Prevent Idle Sleep — blocks auto-sleep when idle.
+        Lid close and manual sleep still work.
 
-        \u{26A0}  Full — prevents ALL sleep, including lid close
-              Requires password. Persists after quit.
+        Prevent ALL Sleep — blocks everything,
+        including lid close. Requires password.
 
-        vs Caffeine: Same idle prevention + Full mode
-        vs Amphetamine: No timers/triggers, but Full mode
-        is built-in (no separate helper app needed)
-
-        Named after the Karabasan — the sleep paralysis
-        demon from Turkic mythology.
+        Red eye = full mode active.
         """
         alert.alertStyle = .informational
         alert.addButton(withTitle: "OK")
@@ -126,20 +268,7 @@ class KarabasanApp: NSObject, NSApplicationDelegate {
         alert.runModal()
     }
 
-    // MARK: - Full mode
-
-    @objc private func enableFull() {
-        releaseAssertion()
-        if setSleepDisabled(true) { mode = .full }
-        updateIcon()
-    }
-
-    @objc private func disableFull() {
-        if setSleepDisabled(false) { mode = .off }
-        updateIcon()
-    }
-
-    // MARK: - Idle (IOPMAssertion)
+    // MARK: - IOPMAssertion
 
     @discardableResult
     private func createAssertion() -> Bool {
@@ -159,7 +288,7 @@ class KarabasanApp: NSObject, NSApplicationDelegate {
         }
     }
 
-    // MARK: - Full (pmset SleepDisabled)
+    // MARK: - pmset SleepDisabled
 
     @discardableResult
     private func setSleepDisabled(_ disabled: Bool) -> Bool {
@@ -186,6 +315,7 @@ class KarabasanApp: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         releaseAssertion()
+        cancelTimer()
     }
 }
 
