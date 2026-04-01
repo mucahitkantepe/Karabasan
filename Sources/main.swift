@@ -15,7 +15,6 @@ struct Duration {
 }
 
 let durations: [Duration] = [
-    Duration(title: "5 Seconds (TEST)", seconds: 5),
     Duration(title: "30 Minutes", seconds: 30 * 60),
     Duration(title: "1 Hour", seconds: 60 * 60),
     Duration(title: "2 Hours", seconds: 2 * 60 * 60),
@@ -215,12 +214,16 @@ class KarabasanApp: NSObject, NSApplicationDelegate {
                 let secs = Int(seconds)
                 let bgProcess = Process()
                 bgProcess.executableURL = URL(fileURLWithPath: "/bin/sh")
-                bgProcess.arguments = ["-c", "sleep \(secs) && /usr/bin/sudo /usr/bin/pmset -a disablesleep 0"]
+                bgProcess.arguments = ["-c", "sleep \(secs) && /usr/bin/sudo -n /usr/bin/pmset -a disablesleep 0"]
                 bgProcess.standardOutput = FileHandle.nullDevice
                 bgProcess.standardError = FileHandle.nullDevice
                 try? bgProcess.run()
                 fullTimerPID = bgProcess.processIdentifier
 
+                // Timer to update UI when duration expires
+                timer = Timer.scheduledTimer(withTimeInterval: seconds + 1, repeats: false) { [weak self] _ in
+                    self?.syncWithSystem()
+                }
                 tooltipTimer = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
                     self?.updateIcon()
                 }
@@ -424,7 +427,7 @@ class KarabasanApp: NSObject, NSApplicationDelegate {
         let value = disabled ? "1" : "0"
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/sudo")
-        process.arguments = ["/usr/bin/pmset", "-a", "disablesleep", value]
+        process.arguments = ["-n", "/usr/bin/pmset", "-a", "disablesleep", value]
         process.standardOutput = FileHandle.nullDevice
         process.standardError = FileHandle.nullDevice
         do {
