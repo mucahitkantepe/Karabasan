@@ -6,15 +6,14 @@ Named after the **Karabasan** — the sleep paralysis demon from Turkic mytholog
 
 ## Usage
 
-- **Left-click** the eye icon to toggle idle sleep prevention on/off
-- **Right-click** for Full mode (prevents ALL sleep including lid close, requires password)
+- **Left-click** the eye icon to toggle sleep prevention on/off (indefinite)
+- **Right-click** to pick a duration (30 minutes to 8 hours, or indefinitely)
+- **Hover** the icon to see time left on a timed session
 
-Three states:
 | Icon | Mode | What it does |
 |------|------|-------------|
 | Eye closed | Off | Sleep allowed |
-| Eye open | On | Idle sleep prevented |
-| Eye with warning | Full | All sleep prevented (including lid close) |
+| Red eye | On | ALL sleep prevented (including lid close) |
 
 ## Install
 
