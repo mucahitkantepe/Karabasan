@@ -6,7 +6,7 @@ Named after the **Karabasan** — the sleep paralysis demon from Turkic mytholog
 
 ## Usage
 
-- **Left-click** the eye icon to toggle sleep prevention on/off (indefinite)
+- **Left-click** the eye icon to toggle sleep prevention on/off (4 hours)
 - **Right-click** to pick a duration (30 minutes to 8 hours, or indefinitely)
 - **Hover** the icon to see time left on a timed session
 

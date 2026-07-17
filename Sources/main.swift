@@ -155,13 +155,14 @@ class KarabasanApp: NSObject, NSApplicationDelegate {
         }
     }
 
-    /// Left-click: toggle all-sleep prevention (indefinite)
+    /// Left-click: toggle all-sleep prevention (4 hours by default)
     private func toggle() {
         if mode == .full {
             deactivateFull()
         } else {
-            activateFull(seconds: nil)
-            activeDurationIndex = durations.count - 1
+            let defaultIndex = 3 // 4 Hours
+            activateFull(seconds: durations[defaultIndex].seconds)
+            activeDurationIndex = defaultIndex
         }
     }
 
@@ -284,7 +285,8 @@ class KarabasanApp: NSObject, NSApplicationDelegate {
         let alert = NSAlert()
         alert.messageText = "Karabasan"
         alert.informativeText = """
-        Left-click: toggle all-sleep prevention on/off
+        Left-click: toggle all-sleep prevention
+        on/off (4 hours)
 
         Right-click: pick a duration (30 minutes to
         8 hours, or indefinitely)
