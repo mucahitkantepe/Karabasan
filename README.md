@@ -13,7 +13,7 @@ Named after the **Karabasan** — the sleep paralysis demon from Turkic mytholog
 | Icon | Mode | What it does |
 |------|------|-------------|
 | Eye closed | Off | Sleep allowed |
-| Red eye | On | ALL sleep prevented (including lid close) |
+| Red eye | On | ALL sleep prevented (including lid close), screen kept awake |
 
 ## Install
 

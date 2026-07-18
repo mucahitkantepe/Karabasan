@@ -1,4 +1,5 @@
 import Cocoa
+import IOKit.pwr_mgt
 
 // MARK: - Types
 
@@ -26,6 +27,7 @@ let durations: [Duration] = [
 class KarabasanApp: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem!
     private var mode: Mode = .off
+    private var assertionID: IOPMAssertionID = 0
     private var timer: Timer?
     private var expiresAt: Date?
     private var tooltipTimer: Timer?
@@ -81,6 +83,7 @@ class KarabasanApp: NSObject, NSApplicationDelegate {
             }
             // Ongoing session (indefinite or still timed)
             cancelTimer()
+            createDisplayAssertion()
             mode = .full
             if let expiry = savedExpiry, expiry != .distantPast {
                 expiresAt = expiry
@@ -93,6 +96,7 @@ class KarabasanApp: NSObject, NSApplicationDelegate {
         } else if !systemDisabled && mode == .full {
             // Background timer expired, or something external turned it off
             fullTimerPID = nil
+            releaseDisplayAssertion()
             cancelTimer()
             clearFullState()
             mode = .off
@@ -175,6 +179,7 @@ class KarabasanApp: NSObject, NSApplicationDelegate {
             // Timed: enable now, spawn background process to disable later
             if setSleepDisabled(true) {
                 mode = .full
+                createDisplayAssertion()
                 expiresAt = Date().addingTimeInterval(seconds)
                 saveFullState(expiresAt: expiresAt)
 
@@ -200,6 +205,7 @@ class KarabasanApp: NSObject, NSApplicationDelegate {
             // Indefinite: just enable
             if setSleepDisabled(true) {
                 mode = .full
+                createDisplayAssertion()
                 saveFullState(expiresAt: nil)
             }
         }
@@ -213,6 +219,7 @@ class KarabasanApp: NSObject, NSApplicationDelegate {
             fullTimerPID = nil
         }
         _ = setSleepDisabled(false)
+        releaseDisplayAssertion()
         clearFullState()
         cancelTimer()
         mode = .off
@@ -225,6 +232,7 @@ class KarabasanApp: NSObject, NSApplicationDelegate {
             kill(pid, SIGTERM)
             fullTimerPID = nil
         }
+        releaseDisplayAssertion()
         if mode == .full {
             _ = setSleepDisabled(false)
             clearFullState()
@@ -291,7 +299,8 @@ class KarabasanApp: NSObject, NSApplicationDelegate {
         Right-click: pick a duration (30 minutes to
         8 hours, or indefinitely)
 
-        Prevents ALL sleep, including lid close.
+        Prevents ALL sleep, including lid close,
+        and keeps the screen awake.
         Persists even after quitting Karabasan.
         Hover the icon to see time left.
 
@@ -329,6 +338,25 @@ class KarabasanApp: NSObject, NSApplicationDelegate {
         return .distantPast
     }
 
+    // MARK: - Display sleep assertion (keeps screen awake, "caffeine" effect)
+
+    private func createDisplayAssertion() {
+        guard assertionID == 0 else { return }
+        IOPMAssertionCreateWithName(
+            kIOPMAssertPreventUserIdleDisplaySleep as CFString,
+            IOPMAssertionLevel(kIOPMAssertionLevelOn),
+            "Karabasan keeps the display awake" as CFString,
+            &assertionID
+        )
+    }
+
+    private func releaseDisplayAssertion() {
+        if assertionID != 0 {
+            IOPMAssertionRelease(assertionID)
+            assertionID = 0
+        }
+    }
+
     // MARK: - pmset SleepDisabled
 
     @discardableResult
@@ -363,6 +391,7 @@ class KarabasanApp: NSObject, NSApplicationDelegate {
     // MARK: - Cleanup
 
     func applicationWillTerminate(_ notification: Notification) {
+        releaseDisplayAssertion()
         cancelTimer()
         pollTimer?.invalidate()
     }
