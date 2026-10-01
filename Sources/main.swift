@@ -34,6 +34,7 @@ class KarabasanApp: NSObject, NSApplicationDelegate {
     private var pollTimer: Timer?
     private var activeDurationIndex: Int?
     private var fullTimerPID: Int32? // PID of background root process for timed full mode
+    private var sudoFailureReported = false
 
     private var stateFile: String {
         NSHomeDirectory() + "/.karabasan_state"
@@ -71,23 +72,22 @@ class KarabasanApp: NSObject, NSApplicationDelegate {
         let systemDisabled = querySleepDisabled()
         let savedExpiry = loadFullState()
 
+        // SleepDisabled survives restarts and relaunches, the background timer process doesn't.
+        // So a timed session past its end is ended here, whichever mode we think we're in.
+        if systemDisabled, let expiry = savedExpiry, expiry != .distantPast, expiry <= Date() {
+            if deactivateFull() { return }
+            // sudo failed, so sleep is still disabled — fall through and show that
+        }
+
         if systemDisabled && mode != .full {
-            // SleepDisabled is on but we didn't know — check if a timer expired
-            if let expiry = savedExpiry, expiry != .distantPast, expiry <= Date() {
-                // Timer should have fired but didn't (crash/reboot). Clean up.
-                _ = setSleepDisabled(false)
-                clearFullState()
-                mode = .off
-                updateIcon()
-                return
-            }
-            // Ongoing session (indefinite or still timed)
+            // Ongoing session we didn't start (relaunch, restart, OS update)
             cancelTimer()
             createDisplayAssertion()
             mode = .full
             if let expiry = savedExpiry, expiry != .distantPast {
                 expiresAt = expiry
                 activeDurationIndex = nil // can't know which duration
+                scheduleExpiry(at: expiry) // the original timer process may be gone
             } else {
                 expiresAt = nil
                 activeDurationIndex = durations.count - 1 // indefinite
@@ -176,30 +176,14 @@ class KarabasanApp: NSObject, NSApplicationDelegate {
         deactivateAll()
 
         if let seconds = seconds {
-            // Timed: enable now, spawn background process to disable later
+            // Timed: enable now, schedule the end
             if setSleepDisabled(true) {
                 mode = .full
                 createDisplayAssertion()
-                expiresAt = Date().addingTimeInterval(seconds)
-                saveFullState(expiresAt: expiresAt)
-
-                // Background process to auto-disable after duration
-                let secs = Int(seconds)
-                let bgProcess = Process()
-                bgProcess.executableURL = URL(fileURLWithPath: "/bin/sh")
-                bgProcess.arguments = ["-c", "sleep \(secs) && /usr/bin/sudo -n /usr/bin/pmset -a disablesleep 0"]
-                bgProcess.standardOutput = FileHandle.nullDevice
-                bgProcess.standardError = FileHandle.nullDevice
-                try? bgProcess.run()
-                fullTimerPID = bgProcess.processIdentifier
-
-                // Timer to update UI when duration expires
-                timer = Timer.scheduledTimer(withTimeInterval: seconds + 1, repeats: false) { [weak self] _ in
-                    self?.syncWithSystem()
-                }
-                tooltipTimer = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
-                    self?.updateIcon()
-                }
+                let expiry = Date().addingTimeInterval(seconds)
+                expiresAt = expiry
+                saveFullState(expiresAt: expiry)
+                scheduleExpiry(at: expiry)
             }
         } else {
             // Indefinite: just enable
@@ -212,19 +196,22 @@ class KarabasanApp: NSObject, NSApplicationDelegate {
         updateIcon()
     }
 
-    private func deactivateFull() {
+    /// Returns false, leaving the session on, if sleep couldn't be re-enabled.
+    @discardableResult
+    private func deactivateFull() -> Bool {
+        guard setSleepDisabled(false) else { return false }
         // Kill background timer process if running
         if let pid = fullTimerPID {
             kill(pid, SIGTERM)
             fullTimerPID = nil
         }
-        _ = setSleepDisabled(false)
         releaseDisplayAssertion()
         clearFullState()
         cancelTimer()
         mode = .off
         expiresAt = nil
         updateIcon()
+        return true
     }
 
     private func deactivateAll() {
@@ -243,6 +230,27 @@ class KarabasanApp: NSObject, NSApplicationDelegate {
     }
 
     // MARK: - Timer
+
+    /// Ends the session at `expiry`: the background process does it even if Karabasan quits,
+    /// and syncWithSystem() does it if that process is gone (restart, OS update, logout).
+    private func scheduleExpiry(at expiry: Date) {
+        let secs = max(0, Int(expiry.timeIntervalSinceNow.rounded(.up)))
+        let bgProcess = Process()
+        bgProcess.executableURL = URL(fileURLWithPath: "/bin/sh")
+        bgProcess.arguments = ["-c", "sleep \(secs) && /usr/bin/sudo -n /usr/bin/pmset -a disablesleep 0"]
+        bgProcess.standardOutput = FileHandle.nullDevice
+        bgProcess.standardError = FileHandle.nullDevice
+        try? bgProcess.run()
+        fullTimerPID = bgProcess.processIdentifier
+
+        // Timer to update UI when duration expires
+        timer = Timer.scheduledTimer(withTimeInterval: TimeInterval(secs) + 1, repeats: false) { [weak self] _ in
+            self?.syncWithSystem()
+        }
+        tooltipTimer = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
+            self?.updateIcon()
+        }
+    }
 
     private func cancelTimer() {
         timer?.invalidate()
@@ -370,10 +378,31 @@ class KarabasanApp: NSObject, NSApplicationDelegate {
         do {
             try process.run()
             process.waitUntilExit()
-            return process.terminationStatus == 0
-        } catch {
-            return false
-        }
+            if process.terminationStatus == 0 { return true }
+        } catch {}
+        reportSudoFailure()
+        return false
+    }
+
+    /// Without the sudoers rule nothing can turn sleep back on, so say so (once per run).
+    private func reportSudoFailure() {
+        guard !sudoFailureReported else { return }
+        sudoFailureReported = true
+        let alert = NSAlert()
+        alert.messageText = "Karabasan can't change sleep settings"
+        alert.informativeText = """
+        sudo refused to run pmset, so sleep prevention
+        can't be turned on or off. The passwordless rule
+        in /etc/sudoers.d/karabasan is probably missing:
+        run the install script again to restore it.
+
+        To turn sleep back on right now, run in Terminal:
+        sudo pmset -a disablesleep 0
+        """
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "OK")
+        NSApp.activate(ignoringOtherApps: true)
+        alert.runModal()
     }
 
     private func querySleepDisabled() -> Bool {
